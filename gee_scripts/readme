@@ -1,0 +1,51 @@
+# GEE Extraction Scripts
+
+This folder contains Earth Engine (GEE) scripts used to extract pixel-level environmental covariates for the Netflix CDN LST analysis.
+
+---
+
+## Files
+
+### **impervious_2011.js**
+Computes the total impervious surface area (square meters) within each of the 217 custom pixel-box regions using **USGS NLCD 2011** imperviousness data.
+
+### **ndvi2011.js**
+Computes the average **NDVI (Normalized Difference Vegetation Index)** for the year 2011 within each pixel-box region using **MODIS MOD13Q1** data (250m resolution, 16-day intervals).
+
+---
+
+## Data Sources
+
+### Impervious Surface (2011)
+- **Dataset:** USGS NLCD Impervious Surface  
+- **Collection:** `USGS/NLCD_RELEASES/2019_REL/NLCD`  
+- **Band:** `impervious`  
+- **Resolution:** 30 m
+
+### NDVI (2011)
+- **Dataset:** MODIS Vegetation Indices (MOD13Q1 v6)  
+- **Collection:** `MODIS/061/MOD13Q1`  
+- **Band:** `NDVI`  
+- **Resolution:** 250 m  
+- **Temporal coverage:** 16-day composites, averaged over 2011
+
+---
+
+## Output
+
+Both scripts produce a CSV file for the 217 pixel-box regions.  
+Each CSV contains columns such as:
+
+### From impervious_2011.js:
+- `pixel_id`
+- `impervious2011_m2` — total impervious area (square meters)
+
+### From ndvi2011.js:
+- `pixel_id`
+- `ndvi2011_mean` — average NDVI for the year 2011
+
+---
+
+## Notes
+- These environmental covariates are used for matching and controlling baseline urban characteristics in the panel LST regression analysis.  
+- Additional scripts (population, elevation, building volume, etc.) can be added in the same folder for consistency.
