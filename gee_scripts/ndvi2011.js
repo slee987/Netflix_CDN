@@ -20,7 +20,7 @@ Map.addLayer(ndvi_2011, {min:0, max:1, palette:['white','green']}, 'NDVI 2011');
 // ------------------------------
 // 3. Call Bounding Boxes
 // ------------------------------
-var regions = ee.FeatureCollection("projects/ee-my-smlee/assets/px_u_map_4326");
+var regions = ee.FeatureCollection("projects/ee-my-smlee/assets/px_u_map_43261");
 
 // Box
 Map.addLayer(regions.style({color:'red', fillColor:'00000000'}), {}, "Pixel Boxes");
