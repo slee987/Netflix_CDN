@@ -1,0 +1,29 @@
+var modis = ee.ImageCollection("MODIS/061/MOD11A2")
+               .first();
+var proj = modis.select('LST_Day_1km').projection();
+var scale = proj.nominalScale();
+
+var scanarea = ee.FeatureCollection("projects/ee-my-smlee/assets/scanarea");
+var region = scanarea.union();   // union
+
+var base = ee.Image(1).toInt().rename('dummy').reproject(proj);
+
+var pixelGrid = base.reduceToVectors({
+  geometry: region,   // 
+  scale: scale,
+  geometryType: 'polygon',
+  eightConnected: false,
+  bestEffort: true,
+  tileScale: 4
+});
+
+Map.addLayer(pixelGrid, {color:'red', fillColor:'00000000'}, 'pixel grid');
+Map.centerObject(region, 12);
+
+print(pixelGrid.limit(10));
+
+Export.table.toAsset({
+  collection: gridWithID,
+  description: 'MODIS_px_grid_export',
+  assetId: 'projects/ee-my-smlee/assets/MODIS_px_grid',   
+});
