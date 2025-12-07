@@ -4,12 +4,12 @@ var proj = modis.select('LST_Day_1km').projection();
 var scale = proj.nominalScale();
 
 var scanarea = ee.FeatureCollection("projects/ee-my-smlee/assets/scanarea");
-var region = scanarea.union();   // union
+var region = scanarea.union();   // 
 
 var base = ee.Image(1).toInt().rename('dummy').reproject(proj);
 
 var pixelGrid = base.reduceToVectors({
-  geometry: region,   // 
+  geometry: region,   //
   scale: scale,
   geometryType: 'polygon',
   eightConnected: false,
@@ -21,9 +21,11 @@ Map.addLayer(pixelGrid, {color:'red', fillColor:'00000000'}, 'pixel grid');
 Map.centerObject(region, 12);
 
 print(pixelGrid.limit(10));
-
+var gridWithID = pixelGrid.map(function(f) {
+  return f.set('pixel_id', f.id());
+});
 Export.table.toAsset({
   collection: gridWithID,
   description: 'MODIS_px_grid_export',
-  assetId: 'projects/ee-my-smlee/assets/MODIS_px_grid',   
+  assetId: 'projects/ee-my-smlee/assets/MODIS_px_grid',   //
 });
