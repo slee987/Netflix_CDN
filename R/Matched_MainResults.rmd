@@ -1,0 +1,182 @@
+---
+title: "Step3"
+output: html_document
+date: "2026-04-09"
+---
+```{r}
+library(arrow)
+library(data.table)
+library(dplyr)
+library(lubridate)
+library(sf)
+library(tigris)
+library(stringr)
+library(zoo)
+```
+# =============================================================================
+# Step 2B + 3B: Group-specific Matching + Stacked DiD
+# =============================================================================
+```{r}
+library(data.table)
+library(fixest)
+
+df_monthly<-fread('//Client/G$/My Drive/DataCen/Code/GDrive_DataCenter/df_monthly.csv')
+Gs       <- sort(df_monthly[!is.na(first_treat_month), unique(first_treat_month)])
+out_list <- list()
+
+for (g in Gs) {
+  g      <- as.Date(g)
+  prev_m <- g %m-% months(1)
+  
+  d_treated <- df_monthly[month_id == prev_m & first_treat_month == g]
+  d_control <- df_monthly[month_id == prev_m &
+                     (is.na(first_treat_month) | first_treat_month > g)]
+  
+  if (nrow(d_treated) == 0 | nrow(d_control) == 0) next
+  
+  M <- rbind(
+    d_treated[, .(pixel_id_hash, STUSPS,
+                  temp_lag1, temp_lag2, temp_lag3,
+                  dc_counts, treated = 1L)],
+    d_control[, .(pixel_id_hash, STUSPS,
+                  temp_lag1, temp_lag2, temp_lag3,
+                  dc_counts, treated = 0L)]
+  )
+  M <- na.omit(M, cols = c("temp_lag1", "temp_lag2", "temp_lag3", "dc_counts"))
+  M <- unique(M, by = "pixel_id_hash")
+  if (nrow(M) == 0) next
+  if (length(unique(M$treated)) < 2) next
+  
+  M_df           <- as.data.frame(M)
+  rownames(M_df) <- M_df$pixel_id_hash
+  
+  m_out <- try(
+    matchit(
+      treated ~ temp_lag1 + temp_lag2 + temp_lag3 + dc_counts,
+      data     = M_df,
+      method   = "nearest",
+      distance = "glm",
+      exact    = ~STUSPS,
+      ratio    = 1,
+      replace  = FALSE
+    ),
+    silent = TRUE
+  )
+  if (inherits(m_out, "try-error")) next
+  
+  m_units <- as.data.table(
+    match.data(m_out)[, c("pixel_id_hash", "treated", "weights")]
+  )
+  
+  treated_px <- m_units[treated == 1L, pixel_id_hash]
+  control_px <- m_units[treated == 0L, pixel_id_hash]
+  
+  p_g <- df_monthly[pixel_id_hash %in% m_units$pixel_id_hash]
+  p_g[, treated := NULL]
+  p_g <- merge(p_g,
+               m_units[, .(pixel_id_hash, treated, weights)],
+               by    = "pixel_id_hash",
+               all.x = FALSE)
+  
+  # Censor not-yet-treated controls at their own treatment date
+  p_g <- p_g[
+    pixel_id_hash %in% treated_px |
+      (pixel_id_hash %in% control_px &
+         (is.na(first_treat_month) | month_id < first_treat_month))
+  ]
+  
+  p_g[, event_g    := g]
+  p_g[, event_time := as.integer(round(
+    (as.yearmon(month_id) - as.yearmon(g)) * 12
+  ))]
+  p_g <- p_g[abs(event_time) <= 24]
+  if (nrow(p_g) == 0) next
+  
+  out_list[[as.character(g)]] <- p_g
+}
+
+stacked_df <- rbindlist(out_list, fill = TRUE)
+stacked_df[, unit_g := interaction(pixel_id_hash, event_g, drop = TRUE)]
+stacked_df[, event_time_plot := fifelse(treated == 1L, event_time, -1L)]
+stacked_df[, post := as.integer(event_time >= 0)]
+stacked_df[, nflx := as.integer(treated == 1L & post == 1L)]
+stacked_df[, event_time_plot := fifelse(treated == 1L, event_time, -1L)]
+cat("Treated pixels:", stacked_df[treated == 1, uniqueN(pixel_id_hash)], "\n")
+cat("Control pixels:", stacked_df[treated == 0, uniqueN(pixel_id_hash)], "\n")
+cat("Cohorts:       ", stacked_df[, uniqueN(event_g)], "\n")
+```
+# =============================================================================
+# Step 3B: DiD on matched sample
+# =============================================================================
+```{r}
+step3b <- feols(
+  c(temp, nighttemp, daytemp) ~ nflx |
+    pixel_id_hash + month_id^STUSPS,
+  cluster = ~pixel_id_hash,
+  weights = ~weights,
+  data    = stacked_df
+)
+
+etable(step3b,
+       dict = c(
+         temp      = "LST (All)",
+         nighttemp = "LST (Night)",
+         daytemp   = "LST (Day)",
+         nflx      = "Netflix OCA"
+       ),
+       title = "Step 3B: DiD on Group-Matched Sample"
+)
+```
+# Event study Plot
+```{r}
+
+step3b_es <- feols(
+  daytemp ~ i(event_time_plot, ref = -1) |
+    pixel_id_hash + month_id^STUSPS,
+  cluster = ~pixel_id_hash,
+  data    = stacked_df
+)
+
+iplot(step3b_es,
+      main = "Step 3B: Event Study (Day LST, Matched Sample)",
+      xlab = "Months relative to treatment"
+)
+abline(h = 0, lty = 2)
+stacked_df <-stacked_df %>% mutate( rt_quarter= ifelse(treated==1, floor(event_time_plot/4),-1))
+
+step3_qt<-feols(daytemp ~ i(rt_quarter, ref = -1)
+                   | pixel_id_hash + month_id^STUSPS,  cluster = ~pixel_id_hash,
+               data = stacked_df )
+# iplot(step3_qt)
+```
+
+# =============================================================================
+# Step 4: FECT on matched sample 
+# =============================================================================
+```{r}
+library(fect)
+
+matched_px <- stacked_df[, unique(pixel_id_hash)]
+setDT(df_monthly)
+# treated_time: 1 if treated AND post-treatment
+df_monthly[, treated_time := as.integer(
+  !is.na(first_treat_month) & month_id >= first_treat_month
+)]
+
+out_fect <- fect(
+  daytemp ~ treated_time,
+  data     = as.data.frame(df_monthly[pixel_id_hash %in% matched_px]),
+  index    = c("pixel_id_hash", "month_id"),
+  method   = "ife",
+  force    = "two-way",
+  se       = TRUE,
+  nboots   = 500,
+  parallel = FALSE
+)
+
+summary(out_fect)
+plot(out_fect, main = "FECT: Effect on Daytime LST")
+
+cat("ATT (avg)        :", out_fect$att.avg, "\n")
+cat("ATT (unit weight):", out_fect$att.avg.unit, "\n")
+```
